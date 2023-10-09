@@ -24,7 +24,6 @@
 #
 # ----------------------------------------------------------------------------------------------------
 #
-
 import os, time, zipfile, tempfile
 # TODO use defusedexpat?
 import xml.parsers.expat, xml.sax.saxutils, xml.dom.minidom
@@ -33,6 +32,7 @@ from argparse import ArgumentParser, FileType
 from contextlib import ExitStack
 from os.path import join, basename, dirname, exists, isdir, abspath
 from io import StringIO
+from json import load
 
 import mx
 import mx_ideconfig
@@ -122,12 +122,13 @@ def eclipseformat(args):
     parser.add_argument('--patchfile', type=FileType("w"), help='file to which a patch denoting the applied formatting changes is written')
     parser.add_argument('--restore', action='store_true', help='restore original files after the formatting job (does not create a backup).')
     parser.add_argument('--filelist', type=FileType("r"), help='only format the files listed in the given file')
+    parser.add_argument('--fetch-if-not-exist', dest='fetch', action='store_true', help='fetch Eclipse if not found')
 
     args = parser.parse_args(args)
     if args.restore:
         args.backup = False
 
-    eclipse_exe = locate_eclipse_exe(args.eclipse_exe)
+    eclipse_exe = locate_eclipse_exe(args.eclipse_exe, args.fetch)
 
     if eclipse_exe is None:
         mx.abort('Could not find Eclipse executable. Use -e option or ensure ECLIPSE_EXE environment variable is set.')
@@ -247,7 +248,7 @@ def eclipseformat(args):
     return 0
 
 
-def locate_eclipse_exe(eclipse_exe):
+def locate_eclipse_exe(eclipse_exe, fetch=False):
     """
     Tries to locate an Eclipse executable starting with the given path.
     If the path is None, checks the ECLIPSE_EXE environment variable.
@@ -259,7 +260,7 @@ def locate_eclipse_exe(eclipse_exe):
     if eclipse_exe is None:
         eclipse_exe = os.environ.get('ECLIPSE_EXE')
     if eclipse_exe is None:
-        return None
+        return _fetch_eclipse() if fetch else None
     # Maybe an Eclipse installation dir was specified - look for the executable in it
     if isdir(eclipse_exe):
         eclipse_exe = join(eclipse_exe, mx.exe_suffix('eclipse'))
@@ -270,6 +271,27 @@ def locate_eclipse_exe(eclipse_exe):
         mx.abort('Not an executable file: ' + eclipse_exe)
 
     return eclipse_exe
+
+
+def _fetch_eclipse():
+    with open(join(mx._mx_home, 'common.json')) as common_file:
+        common_cfg = load(common_file)
+    version, timestamp = common_cfg['eclipse']['short_version'], common_cfg['eclipse']['timestamp']
+    if mx.get_os() not in ('darwin', 'linux'):
+        assert False, 'unsupported os for Eclipse: ' + mx.get_os()
+    if mx.get_arch() not in ('x86_64', 'aarch64'):
+        assert False, 'unsupported arch for Eclipse: ' + mx.get_arch()
+    if mx.get_os() == 'darwin':
+        eclipse_os = 'macosx-cocoa'
+        eclipse_ext = 'dmg'
+    elif mx.get_os() == 'linux':
+        eclipse_os = 'linux-gtk'
+        eclipse_ext = 'tar.gz'
+    else:
+        assert False
+    eclipse_url = (f'https://archive.eclipse.org/eclipse/downloads/drops4/R-{version}-${timestamp}/'
+                   f'eclipse-SDK-{version}-{eclipse_os}-{mx.get_arch()}.{eclipse_ext}')
+    return None
 
 
 def _source_locator_memento(deps, jdk=None):
